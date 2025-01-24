@@ -1,0 +1,12 @@
+**/build
+**/.build
+**/zig-out
+**/.zig-out
+**/zig-cache
+**/.zig-cache
+**/venv/
+**/__pycache__
+compile_commands.json
+**/.cache
+cscope.out
+tags
