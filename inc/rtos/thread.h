@@ -6,6 +6,7 @@
 typedef struct {
     void *sp; /* Stack Pointer */
     uint32_t timeout;
+    uint8_t priority;
     /* ... */
 } rtos_thread_t;
 
@@ -37,6 +38,7 @@ void rtos_thread_create(
     rtos_thread_t *const self,
     rtos_thread_handler_t const handler,
     void *const stack,
-    uint32_t const stack_size);
+    uint32_t const stack_size,
+    uint8_t const priority);
 
 #endif /* RTOS_THREAD_H */

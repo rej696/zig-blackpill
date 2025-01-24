@@ -11,14 +11,23 @@
 #define NVIC_SHPR2_REG (*((volatile uint32_t *)0xE000ED1C))
 #define NVIC_SHPR3_REV (*((volatile uint32_t *)0xE000ED20))
 
+#define RTOS_IDLE_THREAD_PRIORITY (0U)
+
+#ifndef __ARM_FEATURE_CLZ
+#error "CLZ instruction not supported!"
+#endif
+
+/* Use Log2 to identify the index of the highest priority thread by counting the
+ * leading zeros of the bitfield */
+#define LOG2(x) (32 - __builtin_clz((x)))
+
 /* Pointer to current/next thread for scheduling */
 rtos_thread_t *volatile rtos_current;
 rtos_thread_t *volatile rtos_next;
 
 rtos_thread_t *rtos_threads[32 + 1] = {NULL};
-uint8_t rtos_thread_num = 0;
-uint8_t rtos_thread_idx = 0;
-uint32_t rtos_thread_ready_mask = 0;
+uint32_t rtos_ready_set = 0;
+uint32_t rtos_delayed_set = 0;
 
 rtos_thread_t idle_thread = {0};
 void idle_thread_handler()
@@ -39,29 +48,24 @@ void rtos_init(void *const idle_thread_stack, uint32_t const idle_thread_stack_s
         &idle_thread,
         idle_thread_handler,
         idle_thread_stack,
-        idle_thread_stack_size);
+        idle_thread_stack_size,
+        RTOS_IDLE_THREAD_PRIORITY);
 }
 
 void rtos_schedule(void)
 {
     /* No threads are ready to run, so set to Idle thread */
-    if (rtos_thread_ready_mask == 0U) {
-        rtos_thread_idx = 0U;
+    if (rtos_ready_set == 0U) {
+        rtos_next = rtos_threads[0]; /* idle thread */
     } else {
         /* Find next thread to run */
-        do {
-            ++rtos_thread_idx;
-            if (rtos_thread_idx == rtos_thread_num) {
-                rtos_thread_idx = 1U;
-            }
-        } while ((rtos_thread_ready_mask & (1U << (rtos_thread_idx - 1U))) == 0U);
+        rtos_next = rtos_threads[LOG2(rtos_ready_set)];
+        DBC_ASSERT(rtos_next != NULL);
     }
-    rtos_thread_t *const next = rtos_threads[rtos_thread_idx];
 
-    if (next != rtos_current) {
+    if (rtos_next != rtos_current) {
         /* raise pendsv irq by setting "set pending" bit of interrupt and control state register
          * (ICSR) */
-        rtos_next = next;
         *(volatile uint32_t *)0xE000ED04 = (1U << 28U);
     }
 }
@@ -79,13 +83,19 @@ void rtos_run(void)
 
 void rtos_tick(void)
 {
-    for (uint8_t n = 1U; n < rtos_thread_num; ++n) {
-        if (rtos_threads[n]->timeout != 0U) {
-            --rtos_threads[n]->timeout;
-            if (rtos_threads[n]->timeout == 0U) {
-                rtos_thread_ready_mask |= (1U << (n - 1U));
-            }
+    uint32_t working_set = rtos_delayed_set;
+    while (working_set != 0U) {
+        rtos_thread_t *thread = rtos_threads[LOG2(working_set)];
+        DBC_ASSERT(thread != NULL);
+        DBC_ASSERT(thread->timeout != 0U);
+
+        uint32_t thread_bit = (1U << (thread->priority - 1U));
+        --thread->timeout;
+        if (thread->timeout == 0U) {
+            rtos_ready_set |= thread_bit;
+            rtos_delayed_set &= ~thread_bit;
         }
+        working_set &= ~thread_bit;
     }
 }
 
@@ -96,8 +106,10 @@ void rtos_delay(uint32_t ticks)
     /* never call rtos_delay from the idle thread */
     DBC_REQUIRE(rtos_current != rtos_threads[0]);
 
+    uint32_t thread_bit = (1U << (rtos_current->priority - 1U));
     rtos_current->timeout = ticks;
-    rtos_thread_ready_mask &= ~(1U << (rtos_thread_idx - 1));
+    rtos_ready_set &= ~thread_bit;
+    rtos_delayed_set |= thread_bit;
     rtos_schedule();
 
     enable_irq();
@@ -107,8 +119,12 @@ void rtos_thread_create(
     rtos_thread_t *const self,
     rtos_thread_handler_t const handler,
     void *const stack_base,
-    uint32_t const stack_size)
+    uint32_t const stack_size,
+    uint8_t const priority)
 {
+    DBC_REQUIRE(priority < (sizeof(rtos_threads) / sizeof(rtos_threads[0U])));
+    DBC_REQUIRE(rtos_threads[priority] == NULL);
+
     /* get stack pointer and ensure aligned at the 8 byte boudary */
     uint32_t *sp = (uint32_t *)((((uint32_t)stack_base + stack_size) / 8U) * 8U);
 
@@ -144,15 +160,14 @@ void rtos_thread_create(
         *sp = 0xBABECAFE;
     }
 
-    DBC_ASSERT(rtos_thread_num < (sizeof(rtos_threads) / sizeof(rtos_threads[0U])));
 
     /* Register thread with OS */
-    rtos_threads[rtos_thread_num] = self;
+    rtos_threads[priority] = self;
+    self->priority = priority;
     /* Mark thread as ready to run */
-    if (rtos_thread_num > 0U) {
-        rtos_thread_ready_mask |= (1U << (rtos_thread_num - 1U));
+    if (priority > 0U) {
+        rtos_ready_set |= (1U << (priority - 1U));
     }
-    ++rtos_thread_num;
 }
 
 void PendSV_Handler(void)

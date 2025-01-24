@@ -30,6 +30,16 @@
  * - Zig thread
  */
 
+
+/**
+ * Priorities must be unique, and in the range 1..32
+ * Higher values are higher priority
+ */
+#define BLINKY_THREAD_PRIORITY   (1)
+#define UART_THREAD_PRIORITY   (5)
+#define PACKET_THREAD_PRIORITY   (2)
+#define ZIG_THREAD_PRIORITY   (3)
+
 #define IDLE_THREAD_STACK_SIZE   (40)
 #define BLINKY_STACK_SIZE        (512)
 #define PACKET_THREAD_STACK_SIZE (2048)
@@ -243,18 +253,20 @@ int main(void)
     frame_buffer_init();              // init frame buffer
     debug_str("boot");
 
-    rtos_thread_create(&blinky_thread, &blinky_handler, blinky_stack, sizeof(blinky_stack));
-    rtos_thread_create(&uart_thread, &uart_handler, uart_stack, sizeof(uart_stack));
+    rtos_thread_create(&blinky_thread, &blinky_handler, blinky_stack, sizeof(blinky_stack), BLINKY_THREAD_PRIORITY);
+    rtos_thread_create(&uart_thread, &uart_handler, uart_stack, sizeof(uart_stack), UART_THREAD_PRIORITY);
     rtos_thread_create(
         &packet_thread,
         &packet_thread_handler,
         packet_thread_stack,
-        sizeof(packet_thread_stack));
+        sizeof(packet_thread_stack),
+        PACKET_THREAD_PRIORITY);
     rtos_thread_create(
         &zig_thread,
         &zig_main,
         zig_thread_stack,
-        sizeof(zig_thread_stack));
+        sizeof(zig_thread_stack),
+        ZIG_THREAD_PRIORITY);
 
     debug_str("threads created");
 

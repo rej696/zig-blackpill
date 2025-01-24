@@ -1,6 +1,7 @@
 const c = @cImport({
     @cInclude("hal/systick.h");
     @cInclude("utils/debug.h");
+    @cInclude("rtos/thread.h");
 });
 
 const p = @import("hal/pinutils.zig");
@@ -26,6 +27,7 @@ export fn zig_main() void {
             on = !on;
             uart.write(.uart1, if (on) "zick\r\n" else "zock\r\n");
         }
+        c.rtos_delay(1);
     }
 
     while (true) {}
